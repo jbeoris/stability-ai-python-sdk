@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "stability-ai"
+name = "stability-ai-sdk"
 version = "0.0.1"
 description = "Python client for Stability AI API"
 readme = "README.md"
