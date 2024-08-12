@@ -8,7 +8,10 @@ from typing import (
 
 from stability_ai.util import (
     make_url,
-    APIVersion,
+    APIVersion
+)
+
+from stability_ai.error import (
     StabilityAIError
 )
 from stability_ai.client_interface import ClientInterface
