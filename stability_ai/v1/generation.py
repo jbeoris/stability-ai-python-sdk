@@ -11,6 +11,8 @@ from stability_ai.util import (
     process_content_response,
     APIVersion,
     OutputFormat,
+    ImagePath,
+    filter_params,
     StabilityAIContentResponse
 )
 from stability_ai.error import (
@@ -96,6 +98,46 @@ class TextToImageOptions(V1GenerationRequiredParams, V1GenerationOptionalParams)
     height: Optional[int]
     width: Optional[int]
 
+class ImageToImageMode(str, Enum):
+    IMAGE_STRENGTH = 'IMAGE_STRENGTH'
+    STEP_SCHEDULE = 'STEP_SCHEDULE'
+
+class ImageToImageStrengthOptions(TypedDict):
+    mode: ImageToImageMode = ImageToImageMode.IMAGE_STRENGTH
+    image_strength: float
+
+class ImageToImageStepScheduleOptions(TypedDict):
+    mode: ImageToImageMode = ImageToImageMode.STEP_SCHEDULE
+    step_schedule_start: float
+    step_schedule_end: float
+
+class ImageToImageOptions(V1GenerationRequiredParams, V1GenerationOptionalParams, ImageToImageStrengthOptions, ImageToImageStepScheduleOptions):
+    init_image: str
+
+class ImageToImageUpscaleOptions(TypedDict):
+    image: str
+    height: Optional[int]
+    width: Optional[int]
+
+class ImageToImageMaskSource(str, Enum):
+    MASK_IMAGE_WHITE = 'MASK_IMAGE_WHITE'
+    MASK_IMAGE_BLACK = 'MASK_IMAGE_BLACK'
+    INIT_IMAGE_ALPHA = 'INIT_IMAGE_ALPHA'
+
+class ImageToImageMaskingOptions(V1GenerationRequiredParams, V1GenerationOptionalParams):
+    init_image: str
+    mask_source: Optional[ImageToImageMaskSource]
+    mask_image: Optional[str]
+
+def get_multi_part_text_prompts(text_prompts: List[TextPrompt]):
+    multi_part_text_prompts = {}
+
+    for index, text_prompt in enumerate(text_prompts):
+        multi_part_text_prompts[f'text_prompts[{index}][text]'] = text_prompt.get('text')
+        multi_part_text_prompts[f'text_prompts[{index}][weight]'] = text_prompt.get('weight')
+
+    return multi_part_text_prompts
+
 def process_articafts(artifacts: List[dict], endpoint: Endpoint) -> List[StabilityAIContentResponse]:
     results: List[StabilityAIContentResponse] = []
 
@@ -123,11 +165,13 @@ class Generation():
             resource=resource, 
             endpoint=f"{params.get('engine_id')}/{Endpoint.TEXT_TO_IMAGE}"
         )
+        
+        filtered_params = filter_params(params=params, filters={'engine_id'})
 
         response = requests.post(
             url,
             json={
-                **params
+                **filtered_params
             },
             headers={
                 **self.client.headers,
@@ -146,5 +190,153 @@ class Generation():
         raise StabilityAIError(
             response.status_code,
             'Failed to run v1 generation text to image',
+            response.json()
+        )
+  
+    def image_to_image(
+        self, 
+        **params: Unpack[ImageToImageOptions]
+    ) -> StabilityAIContentResponse:
+        image_path = ImagePath(params.get('init_image'))
+        
+        filtered_params = filter_params(params=params, filters={'init_image', 'engine_id', 'text_prompts'})
+
+        url = make_url(
+            version=APIVersion.V1, 
+            resource=resource, 
+            endpoint=f"{params.get('engine_id')}/{Endpoint.IMAGE_TO_IMAGE}"
+        )
+
+        text_prompts = get_multi_part_text_prompts(params.get('text_prompts'))
+
+        response = requests.post(
+            url,
+            files={
+                "init_image": open(image_path.filepath(), "rb")
+            },
+            data={
+                **filtered_params,
+                **text_prompts
+            },
+            headers={
+                **self.client.headers,
+                'Accept': 'application/json'
+            }
+        )
+
+        image_path.cleanup()
+        
+        if response.status_code == 200 \
+            and isinstance(response.json().get('artifacts'), list):
+            return process_articafts(
+                artifacts=response.json().get('artifacts'),
+                endpoint=Endpoint.IMAGE_TO_IMAGE
+            )
+
+        raise StabilityAIError(
+            response.status_code,
+            'Failed to run v1 generation image to image',
+            response.json()
+        )
+  
+    def image_to_image_upscale(
+        self, 
+        **params: Unpack[ImageToImageUpscaleOptions]
+    ) -> StabilityAIContentResponse:
+        image_path = ImagePath(params.get('image'))
+
+        engine_id = EngineId.ESRGAN_V1_X2PLUS.value
+        
+        filtered_params = filter_params(params=params, filters={'image'})
+
+        url = make_url(
+            version=APIVersion.V1, 
+            resource=resource, 
+            endpoint=f"{engine_id}/{Endpoint.IMAGE_TO_IMAGE_UPSCALE}"
+        )
+
+        response = requests.post(
+            url,
+            files={
+                "image": open(image_path.filepath(), "rb")
+            },
+            data={
+                **filtered_params
+            },
+            headers={
+                **self.client.headers,
+                'Accept': 'application/json'
+            }
+        )
+
+        image_path.cleanup()
+        
+        if response.status_code == 200 \
+            and isinstance(response.json().get('artifacts'), list):
+            return process_articafts(
+                artifacts=response.json().get('artifacts'),
+                endpoint=Endpoint.IMAGE_TO_IMAGE_UPSCALE
+            )
+
+        raise StabilityAIError(
+            response.status_code,
+            'Failed to run v1 generation image to image',
+            response.json()
+        )
+  
+    def image_to_image_masking(
+        self, 
+        **params: Unpack[ImageToImageMaskingOptions]
+    ) -> StabilityAIContentResponse:
+        image_path = ImagePath(params.get('init_image'))
+        mask_path: Optional[ImagePath] = None
+
+        if params.get('mask_image') is not None:
+            mask_path = ImagePath(params.get('mask_image'))
+        
+        filtered_params = filter_params(params=params, filters={'init_image', 'mask_image', 'engine_id', 'text_prompts'})
+
+        text_prompts = get_multi_part_text_prompts(params.get('text_prompts'))
+
+        url = make_url(
+            version=APIVersion.V1, 
+            resource=resource, 
+            endpoint=f"{params.get('engine_id')}/{Endpoint.IMAGE_TO_IMAGE_MASKING}"
+        )
+
+        files = {
+            "init_image": open(image_path.filepath(), "rb")
+        }
+
+        if mask_path is not None:
+            files['mask_image'] = open(mask_path.filepath(), "rb")
+
+        response = requests.post(
+            url,
+            files=files,
+            data={
+                **filtered_params,
+                **text_prompts
+            },
+            headers={
+                **self.client.headers,
+                'Accept': 'application/json'
+            }
+        )
+
+        image_path.cleanup()
+        if mask_path is not None:
+            mask_path.cleanup()
+        
+        if response.status_code == 200 \
+            and isinstance(response.json().get('artifacts'), list):
+            return process_articafts(
+                artifacts=response.json().get('artifacts'),
+                endpoint=Endpoint.IMAGE_TO_IMAGE_MASKING
+            )
+
+        raise StabilityAIError(
+            response.status_code,
+            'Failed to run v1 generation image to image masking',
             response.json()
         )

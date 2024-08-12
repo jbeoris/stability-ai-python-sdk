@@ -18,8 +18,7 @@ class Client(ClientInterface):
     @property
     def headers(self):
         return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {self.api_key}"
         }
 
     @property

@@ -6,7 +6,7 @@ import base64
 from pathlib import Path
 from enum import Enum
 from pydantic import BaseModel
-from typing import (Optional, Union)
+from typing import (Optional, Union, Set)
 from urllib.parse import urlparse
 
 STABILITY_AI_BASE_URL = "https://api.stability.ai"
@@ -123,22 +123,25 @@ def delete_file(filepath: str):
 def download_image(url: str):
     filename = f"{uuid.uuid4()}.{get_file_extension(url)}"
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        filepath = os.path.join(temp_dir, filename)
+    temp_dir = get_persistent_temp_dir()
+    filepath = os.path.join(temp_dir, filename)
 
-        response = requests.get(url)
-        if response.status_code == 200:
-            with open(filepath, 'wb') as file:
-                file.write(response.content)
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(filepath, 'wb') as file:
+            file.write(response.content)
 
-            return filepath
-        else:
-            raise Exception(f"Failed to download image. Url: {url}, Status code: {response.status_code}")
+        return filepath
+    else:
+        raise Exception(f"Failed to download image. Url: {url}, Status code: {response.status_code}")
         
 class FinishReason(Enum):
     SUCCESS = "SUCCESS"
     CONTENT_FILTERED = "CONTENT_FILTERED"
     ERROR = "ERROR"
+
+def filter_params(params: dict, filters: Set[str]):
+    return {k: v.value if isinstance(v, Enum) else v for k, v in params.items() if k not in filters}
 
 def get_content_type(output_format: OutputFormat):
     match output_format:
